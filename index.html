@@ -253,6 +253,7 @@
       <div class="backbar"><button class="back" onclick="go('menu')">← เมนู</button><span class="scrtitle">🛒 ใบ PR (A5 แนวนอน)</span>
         <button class="btn b" onclick="renderPR()" style="margin-left:auto">↻ ดูตัวอย่าง</button>
         <button class="btn g" onclick="commitPR()">✔ ออกเลข &amp; บันทึก</button>
+        <button class="btn b" onclick="exportPRExcel()">⬇ Export Excel</button>
         <button class="btn or" onclick="printPR()">🖨️ พิมพ์ / บันทึก PDF</button></div>
       <div class="hint">A5 แนวนอน · เกิน 10 รายการแยกหลายหน้า แต่ละหน้าเลขที่ของตัวเอง · <b>เลขที่พิมพ์แก้เองได้</b> ระบบเติมเลขถัดไปให้</div>
       <div class="prnumbox noprint">
@@ -279,7 +280,6 @@ const FIREBASE_CONFIG={
   authDomain: "store-me-8dd7c.firebaseapp.com",
   databaseURL: "https://store-me-8dd7c-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "store-me-8dd7c"
-
 };
 const CLOUD=!String(FIREBASE_CONFIG.apiKey).includes("PASTE");
 function setStatus(on){var b=document.getElementById('cloudbar');if(!b)return;
@@ -523,6 +523,15 @@ function upsertMasterItems(list){
     else{DB.items.push({code:o.code,name:o.name,dept:o.dept,cat:o.cat,uom:o.uom,onhand:o.onhand,min:o.min,max:o.max,machine:o.machine});add++;}});
   save();renderMaster();renderDash();
   toast('✔ นำเข้าสำเร็จ — เพิ่มใหม่ '+add+' / อัปเดต '+upd+' รายการ');
+}
+function exportPRExcel(){
+  const low=lowItems();if(!low.length)return toast('ไม่มีของต้องสั่งซื้อ',1);
+  const seq=parseInt(document.getElementById('pr_seq').value)||1;
+  const head=['เลขที่เอกสาร','No.','รหัส','รายละเอียด','จำนวนสั่งซื้อ','หน่วย','คงเหลือ','Min','Max','แผนก','วันที่ต้องการ'];
+  const body=low.map((it,idx)=>{let order=it.max-it.onhand;if(order<=0)order=Math.max(it.min-it.onhand,1);
+    return [fmtNo(seq+Math.floor(idx/PER_PAGE)),(idx%PER_PAGE)+1,it.code,it.name,order,it.uom,it.onhand,it.min,it.max,it.dept,reqDate()];});
+  downloadXls('ใบสั่งซื้อ_PR',head,body);
+  toast('✔ ส่งออกใบ PR เป็น Excel แล้ว '+low.length+' รายการ');
 }
 
 function prBase(){return (document.getElementById('pr_op').value||'ME').trim()+(document.getElementById('pr_yy').value||'26').trim()+(document.getElementById('pr_mm').value||'06').trim()+'-';}
