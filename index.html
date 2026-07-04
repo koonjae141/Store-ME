@@ -178,6 +178,9 @@
           <button class="btn b" id="lockbtn" style="margin-left:auto" onclick="unlockStock()">🔒 ปลดล็อกแก้คงเหลือ</button>
           <button class="btn or" onclick="saveStock()">💾 บันทึกคงเหลือ</button>
           <button class="btn gray" onclick="changePass()">🔑 ตั้ง/เปลี่ยนรหัส</button>
+          <input type="file" id="importfile" accept=".csv,.txt" style="display:none" onchange="importMaster(this)">
+          <button class="btn b" onclick="document.getElementById('importfile').click()">📥 นำเข้าทะเบียน (CSV)</button>
+          <button class="btn b" onclick="exportMaster()">📤 ส่งออกทะเบียน (CSV)</button>
         </div>
       </div>
       <div class="toolbar"><input class="inp search" id="msearch" placeholder="🔎 ค้นหา" oninput="renderMaster()"><select class="inp" id="mdept" onchange="renderMaster()"></select></div>
@@ -276,6 +279,7 @@ const FIREBASE_CONFIG={
   authDomain: "store-me-8dd7c.firebaseapp.com",
   databaseURL: "https://store-me-8dd7c-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "store-me-8dd7c"
+
 };
 const CLOUD=!String(FIREBASE_CONFIG.apiKey).includes("PASTE");
 function setStatus(on){var b=document.getElementById('cloudbar');if(!b)return;
@@ -471,6 +475,55 @@ function downloadXls(name,head,body){
   const blob=new Blob(['﻿<html><head><meta charset="utf-8"></head><body>'+t+'</body></html>'],{type:'application/vnd.ms-excel'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name+'_'+Date.now()+'.xls';document.body.appendChild(a);a.click();a.remove();
 }
+// ---- Import / Export ทะเบียนวัสดุ (CSV เป็นไฟล์กลาง ใช้ข้ามเวอร์ชัน/ข้ามเครื่องได้) ----
+function csvCell(v){v=String(v==null?'':v);if(/[",\n\r]/.test(v))v='"'+v.replace(/"/g,'""')+'"';return v;}
+function exportMaster(){
+  const head=['code','name','department','category','uom','current_stock','min_stock','max_stock','machine'];
+  let csv=head.join(',')+'\r\n';
+  DB.items.forEach(i=>{csv+=[i.code,i.name,i.dept,i.cat,i.uom,i.onhand,i.min,i.max,i.machine].map(csvCell).join(',')+'\r\n';});
+  const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='ทะเบียนวัสดุ_'+Date.now()+'.csv';document.body.appendChild(a);a.click();a.remove();
+  toast('✔ ส่งออกทะเบียนวัสดุ '+DB.items.length+' รายการแล้ว');
+}
+function parseCsv(text){
+  text=text.replace(/^﻿/,'');const rows=[];let row=[],cur='',q=false;
+  for(let i=0;i<text.length;i++){const ch=text[i];
+    if(q){ if(ch==='"'){ if(text[i+1]==='"'){cur+='"';i++;} else q=false; } else cur+=ch; }
+    else { if(ch==='"')q=true; else if(ch===','){row.push(cur);cur='';} else if(ch==='\n'){row.push(cur);rows.push(row);row=[];cur='';} else if(ch==='\r'){} else cur+=ch; } }
+  if(cur!==''||row.length){row.push(cur);rows.push(row);}
+  return rows.filter(r=>r.length>1||(r.length===1&&r[0]!==''));
+}
+function importMaster(input){
+  const f=input.files&&input.files[0];if(!f)return;
+  const rd=new FileReader();
+  rd.onload=e=>{try{doImportMaster(e.target.result);}catch(err){toast('อ่านไฟล์ไม่ได้: '+err.message,1);}input.value='';};
+  rd.readAsText(f,'utf-8');
+}
+function doImportMaster(text){
+  const rows=parseCsv(text);if(rows.length<2)return toast('ไฟล์ว่างหรือไม่มีข้อมูล',1);
+  const H=rows[0].map(h=>String(h).trim().toLowerCase());
+  const at=names=>{for(const n of names){const j=H.indexOf(n);if(j>=0)return j;}return -1;};
+  const ci=at(['code','item','รหัส']),ni=at(['name','description','รายการ','ชื่อรายการ']);
+  if(ci<0||ni<0)return toast('ไฟล์ต้องมีคอลัมน์ code และ name',1);
+  const di=at(['department','dept','แผนก']),cti=at(['category','ประเภท']),ui=at(['uom','u/m','หน่วย']),
+        si=at(['current_stock','quantity on hand','on hand','คงเหลือ']),mni=at(['min_stock','min']),mxi=at(['max_stock','max']),mci=at(['machine','เครื่องจักร']);
+  const num=(r,j)=>{if(j<0)return 0;const v=parseInt(String(r[j]).replace(/[^0-9-]/g,''));return isNaN(v)?0:v;};
+  const str=(r,j,d)=>{const v=j>=0?String(r[j]||'').trim():'';return v||d||'';};
+  const list=[];
+  for(let r=1;r<rows.length;r++){const row=rows[r];const code=String(row[ci]||'').trim(),nm=String(row[ni]||'').trim();if(!code||!nm)continue;
+    list.push({code,name:nm,dept:str(row,di,'ME'),cat:str(row,cti,'Spare Part'),uom:str(row,ui,'PC'),onhand:num(row,si),min:num(row,mni),max:num(row,mxi),machine:str(row,mci,'')});}
+  if(!list.length)return toast('ไม่พบรายการที่นำเข้าได้',1);
+  if(!confirm('นำเข้า '+list.length+' รายการ? (รหัสที่มีอยู่จะถูกอัปเดตข้อมูล+ยอดคงเหลือตามไฟล์)'))return;
+  upsertMasterItems(list);
+}
+function upsertMasterItems(list){
+  let add=0,upd=0;
+  list.forEach(o=>{const ex=byCode(o.code);
+    if(ex){Object.assign(ex,{name:o.name,dept:o.dept,cat:o.cat,uom:o.uom,onhand:o.onhand,min:o.min,max:o.max,machine:o.machine});upd++;}
+    else{DB.items.push({code:o.code,name:o.name,dept:o.dept,cat:o.cat,uom:o.uom,onhand:o.onhand,min:o.min,max:o.max,machine:o.machine});add++;}});
+  save();renderMaster();renderDash();
+  toast('✔ นำเข้าสำเร็จ — เพิ่มใหม่ '+add+' / อัปเดต '+upd+' รายการ');
+}
 
 function prBase(){return (document.getElementById('pr_op').value||'ME').trim()+(document.getElementById('pr_yy').value||'26').trim()+(document.getElementById('pr_mm').value||'06').trim()+'-';}
 const fmtNo=n=>prBase()+String(n).padStart(3,'0');
@@ -616,6 +669,12 @@ if(CLOUD){
   approveSlip=async function(slipId){var who=await askModal('ชื่อผู้อนุมัติ (Approver)');if(!who)return;var at=nowStr(),updates={},n=0;DB.txns.forEach(function(t){if(t.type==='GI'&&t.slipId===slipId&&!t.approved&&t._key){updates['txns/'+t._key+'/approved']=true;updates['txns/'+t._key+'/approvedBy']=who;updates['txns/'+t._key+'/approvedAt']=at;n++;}});if(n)await rdb.ref().update(updates);toast('✔ อนุมัติใบเบิก '+slipId+' ('+n+' รายการ)');};
   changePass=async function(){var cur=await askModal('ใส่รหัสผ่านปัจจุบัน (หรือรหัสรีเซ็ต Happy123)');if(cur===null)return;if(cur!==DB.editPass&&cur!==RESET_CODE)return toast('รหัสปัจจุบันไม่ถูกต้อง',1);var np=await askModal('ตั้งรหัสผ่านใหม่');if(np===null||np==='')return toast('ยกเลิก/รหัสว่าง',1);var np2=await askModal('ยืนยันรหัสผ่านใหม่');if(np!==np2)return toast('รหัสใหม่ไม่ตรงกัน',1);await rdb.ref('meta/editPass').set(np);toast('✔ เปลี่ยนรหัสผ่านแล้ว');};
   resetData=function(){toast('โหมดคลาวด์: การล้างข้อมูลทำจาก Firebase Console เท่านั้น (กันข้อมูลส่วนกลางหายโดยไม่ตั้งใจ)',1);};
+  upsertMasterItems=async function(list){    // นำเข้าขึ้นคลาวด์ → ทุกเครื่องเห็นตรงกัน
+    var updates={};
+    list.forEach(function(o){updates['items/'+o.code]={name:o.name,dept:o.dept,cat:o.cat,uom:o.uom,onhand:o.onhand,min:o.min,max:o.max,machine:o.machine};});
+    await rdb.ref().update(updates);
+    toast('✔ นำเข้าขึ้นคลาวด์แล้ว '+list.length+' รายการ (ทุกเครื่องจะเห็นตรงกัน)');
+  };
 }
 </script>
 </body>
